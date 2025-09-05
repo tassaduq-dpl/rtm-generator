@@ -10,9 +10,23 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// CORS middleware - allow requests from localhost:8080
+// CORS middleware - allow requests from multiple origins
 app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', 'http://localhost:8080');
+    // Define allowed origins
+    const allowedOrigins = [
+        'http://localhost:8080',
+        'https://qa-coverage-spark-9m6m1u1co-tassaduq-hussains-projects.vercel.app',
+        'https://lovable.dev'
+        // Add more origins as needed
+    ];
+    
+    const origin = req.headers.origin;
+    
+    // Check if the request origin is in the allowed origins list
+    if (allowedOrigins.includes(origin)) {
+        res.header('Access-Control-Allow-Origin', origin);
+    }
+    
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
     res.header('Access-Control-Allow-Credentials', 'true');
