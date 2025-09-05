@@ -338,7 +338,7 @@ class Database {
                        time_frame as timeFrame, created_at, updated_at
                 FROM sprints
                 WHERE connection_id = ?
-                ORDER BY name ASC
+                ORDER BY start_date ASC
             `;
 
             this.db.all(selectSQL, [connectionId], (err, rows) => {
