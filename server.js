@@ -629,7 +629,6 @@ app.get('/rtm-download', async (req, res) => {
 
         // Generate RTM data
         const rtmData = await (await getRTMGenerator(connection_id)).generateRTM(userStoryIds);
-        console.log(rtmData);
 
         // Calculate Overall Coverage KPIs
         const totalUserStories = new Set(rtmData.map(row => row['User Story ID'])).size;

@@ -17,6 +17,24 @@ const ExcelJS = require('exceljs');
 const cheerio = require('cheerio');
 require('dotenv').config();
 
+/*
+* Executes a function in parallel for each item in a list with a configurable concurrency limit.
+* 
+* This function creates a pool of worker promises that process items from the list concurrently.
+* Each worker continuously processes items until the list is exhausted, ensuring optimal
+* resource utilization while preventing overwhelming the system with too many concurrent operations.
+*/
+const parallel = (list, fn, limit = 5) => {
+  const iterator = list.keys();
+  const promises = [...Array(limit)].map(async (i) => {
+    while ((i = iterator.next()).value !== undefined) {
+      const item = list[i.value];
+      if (item) await fn(item, i.value);
+    }
+  });
+  return Promise.all(promises);
+};
+
 class AzureDevOpsRTMGenerator {
     /**
      * Initialize the Azure DevOps RTM Generator
@@ -415,15 +433,16 @@ class AzureDevOpsRTMGenerator {
      */
     async generateRTM(userStoryIds) {
         const rtmData = [];
-        
-        for (const userStoryId of userStoryIds) {
+
+        await parallel(userStoryIds, async (userStoryId) => {
+
             console.log(`Processing User Story ${userStoryId}`);
             
             // Fetch user story
             const userStory = await this.fetchUserStory(userStoryId);
             if (!userStory) {
                 console.warn(`Could not fetch user story ${userStoryId}`);
-                continue;
+                return;
             }
             
             // Fetch related test cases
@@ -445,20 +464,23 @@ class AzureDevOpsRTMGenerator {
                     'Priority': this.mapPriority(userStory.priority),
                     'Execution': ''
                 });
-                continue;
+                return;
             } 
             const testCasesMap = allTestCases.reduce((acc, testCase) => {
                 const acNo = testCase.acceptanceCriteria;
                 acc.set(acNo, (acc.get(acNo) || []).concat(testCase));
                 return acc;
             }, new Map());
-
+    
             Object.entries(userStory.acceptanceCriteria).forEach(([acNo, criteria]) => {
                 const testCases = testCasesMap.get(Number(acNo)) || [];
-                if (testCases.length === 0) {
+                const body = {
+                    'User Story ID': userStoryId,
+                    'Feature': userStory.title,
+                }
+                if (!testCases.length) {
                     rtmData.push({
-                        'User Story ID': userStoryId,
-                        'Feature': userStory.title,
+                        ...body,
                         'Scenario Type': 'Functional',
                         'Description': criteria,
                         'Test Case ID': '',
@@ -470,8 +492,7 @@ class AzureDevOpsRTMGenerator {
                 }
                 testCases.forEach((testCase) => {
                     rtmData.push({
-                        'User Story ID': userStoryId,
-                        'Feature': userStory.title,
+                        ...body,
                         'Scenario Type': testCase.scenarioType || 'Functional',
                         'Description': testCase.description || testCase.title,
                         'Test Case ID': testCase.id,
@@ -481,7 +502,7 @@ class AzureDevOpsRTMGenerator {
                     });
                 });
             })
-        }
+        })
         
         return rtmData;
     }
@@ -719,15 +740,21 @@ class AzureDevOpsRTMGenerator {
             }
             
             // Format sprint data for better usability
-            const sprints = iterationsData.value.map(iteration => ({
-                id: iteration.id,
-                name: iteration.name,
-                path: iteration.path,
-                startDate: iteration.attributes?.startDate || null,
-                finishDate: iteration.attributes?.finishDate || null,
-                timeFrame: iteration.attributes?.timeFrame || null,
-                url: iteration.url
-            }));
+            const sprints = iterationsData.value.reduce((list, iteration) => {
+                if (iteration.attributes?.timeFrame === 'future') {
+                    return list;
+                }
+                list.push({
+                    id: iteration.id,
+                    name: iteration.name,
+                    path: iteration.path,
+                    startDate: iteration.attributes?.startDate || null,
+                    finishDate: iteration.attributes?.finishDate || null,
+                    timeFrame: iteration.attributes?.timeFrame || null,
+                    url: iteration.url
+                });
+                return list;
+            }, []);
             
             console.log(`Found ${sprints.length} sprints`);
             return sprints;
