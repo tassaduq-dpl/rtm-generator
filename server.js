@@ -16,7 +16,8 @@ app.use((req, res, next) => {
     const allowedOrigins = [
         'http://localhost:8080',
         'https://qa-coverage-spark-9m6m1u1co-tassaduq-hussains-projects.vercel.app',
-        'https://lovable.dev'
+        'https://lovable.dev',
+        'https://qa-coverage-spark.vercel.app'
         // Add more origins as needed
     ];
     
