@@ -29,7 +29,7 @@ const parallel = (list, fn, limit = 5) => {
   const promises = [...Array(limit)].map(async (i) => {
     while ((i = iterator.next()).value !== undefined) {
       const item = list[i.value];
-      if (item) await fn(item, i.value);
+      await fn(item, i.value);
     }
   });
   return Promise.all(promises);
