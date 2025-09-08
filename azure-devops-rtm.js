@@ -768,6 +768,153 @@ class AzureDevOpsRTMGenerator {
             return [];
         }
     }
+
+    /**
+     * Get user stories by date range
+     * 
+     * @param {Date} startDate - Start date for the range
+     * @param {Date} endDate - End date for the range
+     * @param {string} projectArea - Optional area path filter
+     * @returns {Array<number>} Array of user story IDs
+     */
+    async getUserStoriesByDateRange(startDate, endDate, projectArea = null) {
+        try {
+            // Format dates to YYYY-MM-DD format (no time component)
+            const startDateStr = startDate.toISOString().split('T')[0];
+            const endDateStr = endDate.toISOString().split('T')[0];
+            
+            // Build WIQL query to get user stories by date range
+            let wiqlQuery = `
+                SELECT [System.Id]
+                FROM WorkItems
+                WHERE [System.WorkItemType] = 'User Story'
+                AND [System.CreatedDate] >= '${startDateStr}'
+                AND [System.CreatedDate] <= '${endDateStr}'
+            `;
+            
+            // Add project area filter if specified
+            if (projectArea) {
+                wiqlQuery += ` AND [System.AreaPath] UNDER '${projectArea}'`;
+            }
+            
+            wiqlQuery += ` ORDER BY [System.Id]`;
+            
+            const wiqlUrl = `${this.apiBaseUrl}/wit/wiql?api-version=7.0`;
+            const queryResult = await this.makeApiRequest(wiqlUrl, 'POST', { query: wiqlQuery });
+            
+            if (!queryResult || !queryResult.workItems) {
+                return [];
+            }
+            
+            return queryResult.workItems.map(item => item.id);
+            
+        } catch (error) {
+            console.error('Error fetching user stories by date range:', error);
+            return [];
+        }
+    }
+
+    /**
+     * Calculate coverage trend over time periods
+     * 
+     * @param {number} weeks - Number of weeks to analyze (default: 4)
+     * @param {string} projectArea - Optional area path filter
+     * @returns {Object} Coverage trend data
+     */
+    async calculateCoverageTrend(weeks = 4, projectArea = null) {
+        const trendData = [];
+
+        await parallel(
+            [...Array(weeks)].map((_, i) => weeks - i - 1),
+            async (i) => {
+                const weekEnd = new Date();
+                weekEnd.setDate(weekEnd.getDate() - i * 7);
+
+                const weekStart = new Date(weekEnd);
+                weekStart.setDate(weekStart.getDate() - 6);
+
+                try {
+                    // Get user stories created/updated in this week
+                    const userStoryIds = await this.getUserStoriesByDateRange(
+                        weekStart,
+                        weekEnd,
+                        projectArea
+                    );
+
+                    if (!userStoryIds.length) {
+                        trendData.push({
+                            week: `Week ${weeks - i}`,
+                            coverage: 0,
+                            totalUserStories: 0,
+                            coveredUserStories: 0,
+                            dateRange: {
+                                start: weekStart.toISOString().split("T")[0],
+                                end: weekEnd.toISOString().split("T")[0],
+                            },
+                        });
+                        return;
+                    }
+
+                    // Generate RTM for these user stories
+                    const rtmData = await this.generateRTM(userStoryIds);
+
+                    // Calculate coverage metrics
+                    const totalUserStories = new Set(
+                        rtmData.map((row) => row["User Story ID"])
+                    ).size;
+                    const coveredUserStories = new Set(
+                        rtmData
+                            .filter((row) => row["Status"] === "Covered")
+                            .map((row) => row["User Story ID"])
+                    ).size;
+                    const coveragePercentage =
+                        totalUserStories > 0
+                            ? Math.round((coveredUserStories / totalUserStories) * 100)
+                            : 0;
+
+                    trendData.push({
+                        week: `Week ${weeks - i}`,
+                        coverage: coveragePercentage,
+                        totalUserStories: totalUserStories,
+                        coveredUserStories: coveredUserStories,
+                        dateRange: {
+                            start: weekStart.toISOString().split("T")[0],
+                            end: weekEnd.toISOString().split("T")[0],
+                        },
+                    });
+                } catch (weekError) {
+                    console.error(
+                        `Error calculating coverage for week ${weeks - i}:`,
+                        weekError
+                    );
+                    trendData.push({
+                        week: `Week ${weeks - i}`,
+                        coverage: 0,
+                        totalUserStories: 0,
+                        coveredUserStories: 0,
+                        error: "Failed to calculate coverage for this week",
+                        dateRange: {
+                            start: weekStart.toISOString().split("T")[0],
+                            end: weekEnd.toISOString().split("T")[0],
+                        },
+                    });
+                }
+            }
+        );
+
+        // Sort trendData by week order to ensure correct sequence
+        trendData.sort((a, b) => {
+            const weekA = parseInt(a.week.split(' ')[1]);
+            const weekB = parseInt(b.week.split(' ')[1]);
+            return weekA - weekB;
+        });
+
+        return {
+            weeks: weeks,
+            data: trendData,
+            calculatedAt: new Date().toISOString(),
+        };
+    }
 }
 
 /**
@@ -837,7 +984,7 @@ async function main() {
 }
 
 // Export the class for use as a module
-module.exports = AzureDevOpsRTMGenerator;
+module.exports = { AzureDevOpsRTMGenerator, parallel };
 
 // Run main function if this file is executed directly
 if (require.main === module) {

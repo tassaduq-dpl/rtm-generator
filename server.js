@@ -3,7 +3,7 @@
  */
 
 const express = require('express');
-const AzureDevOpsRTMGenerator = require('./azure-devops-rtm');
+const { AzureDevOpsRTMGenerator, parallel } = require('./azure-devops-rtm');
 const Database = require('./database');
 require('dotenv').config();
 
@@ -574,18 +574,20 @@ app.delete('/connections/:id', async (req, res) => {
 
 /**
  * GET /rtm-download
- * Generate RTM KPI statistics in JSON format (same as Excel KPI sheet)
+ * Generate RTM KPI statistics in JSON format (same as Excel KPI sheet) with optional coverage trend
  * 
  * Query Parameters:
  * - story_ids: comma-separated list of user story IDs (e.g., "123,456,789")
  * - sprint_name: name of the sprint (e.g., "Sprint 40")
  * - connection_id: ID of the connection to use (optional if default connection exists)
+ * - include_trend: Set to 'true' to include coverage trend data (optional)
+ * - trend_weeks: Number of weeks for trend analysis (default: 4, only used if include_trend=true)
  * 
  * Note: Only one of story_ids or sprint_name can be used at a time
  */
 app.get('/rtm-download', async (req, res) => {
     try {
-        const { story_ids, sprint_name, connection_id } = req.query;
+        const { story_ids, sprint_name, connection_id, include_trend, trend_weeks = 4 } = req.query;
 
         // Validate that at least one parameter is provided
         if (!story_ids && !sprint_name) {
@@ -615,10 +617,7 @@ app.get('/rtm-download', async (req, res) => {
                     message: `Invalid story_ids format: ${error.message}`
                 });
             }
-        }
-
-        // Handle sprint_name parameter
-        else if (sprint_name) {
+        } else if (sprint_name) {
             try {
                 console.log(`Fetching user stories for sprint: ${sprint_name}`);
                 userStoryIds = await (await getRTMGenerator(connection_id)).fetchUserStoriesBySprint(sprint_name);
@@ -642,7 +641,8 @@ app.get('/rtm-download', async (req, res) => {
         console.log(`Generating RTM KPI data for user story IDs: ${userStoryIds.join(', ')}`);
 
         // Generate RTM data
-        const rtmData = await (await getRTMGenerator(connection_id)).generateRTM(userStoryIds);
+        const generator = await getRTMGenerator(connection_id);
+        const rtmData = await generator.generateRTM(userStoryIds);
 
         // Calculate Overall Coverage KPIs
         const totalUserStories = new Set(rtmData.map(row => row['User Story ID'])).size;
@@ -696,6 +696,18 @@ app.get('/rtm-download', async (req, res) => {
             };
         });
 
+        // NEW: Calculate coverage trend if requested
+        let coverageTrend = null;
+        if (include_trend === 'true') {
+            try {
+                console.log('Calculating coverage trend...');
+                coverageTrend = await generator.calculateCoverageTrend(parseInt(trend_weeks));
+            } catch (trendError) {
+                console.error('Error calculating coverage trend:', trendError);
+                // Don't fail the entire request, just set trend to null
+            }
+        }
+
         // Calculate additional insights
         const uncoveredUserStories = totalUserStories - new Set(
             rtmData.filter(row => row['Status'] === 'Covered').map(row => row['User Story ID'])
@@ -716,7 +728,7 @@ app.get('/rtm-download', async (req, res) => {
             failPercentage: (passCount + failCount) > 0 ? Math.round((failCount / (passCount + failCount)) * 100) : 0
         };
 
-        // Build response
+        // Build response with optional trend data
         const kpiData = {
             success: true,
             reportIdentifier: reportIdentifier,
@@ -725,7 +737,9 @@ app.get('/rtm-download', async (req, res) => {
                 connectionId: connection_id || 'default',
                 userStoryIds: userStoryIds,
                 sprintName: sprint_name || null,
-                totalRtmRows: rtmData.length
+                totalRtmRows: rtmData.length,
+                includeTrend: include_trend === 'true',
+                trendWeeks: include_trend === 'true' ? parseInt(trend_weeks) : null
             },
             overallCoverage: {
                 totalUserStories: totalUserStories,
@@ -740,6 +754,8 @@ app.get('/rtm-download', async (req, res) => {
                 execution: executionSummary
             },
             moduleWiseCoverage: moduleWiseCoverage,
+            // NEW: Add coverage trend data if requested
+            ...(coverageTrend && { coverageTrend }),
             summary: {
                 topPerformingModules: moduleWiseCoverage
                     .filter(module => module.totalUseCases > 0)
@@ -857,13 +873,15 @@ app.get('/', (req, res) => {
                 }
             },
             'GET /rtm-download': {
-                description: 'Generate RTM KPI statistics in JSON format (same data as Excel KPI sheet)',
+                description: 'Generate RTM KPI statistics in JSON format (same data as Excel KPI sheet) with optional coverage trend',
                 parameters: {
                     story_ids: 'Comma-separated list of user story IDs (e.g., "123,456,789")',
                     sprint_name: 'Name of the sprint (e.g., "Sprint 40")',
-                    connection_id: 'Connection ID to use (optional)'
+                    connection_id: 'Connection ID to use (optional)',
+                    include_trend: 'Set to "true" to include coverage trend data (optional)',
+                    trend_weeks: 'Number of weeks for trend analysis (default: 4, only used if include_trend=true)'
                 },
-                returns: 'JSON object with overall coverage, module-wise coverage, and summary insights',
+                returns: 'JSON object with overall coverage, module-wise coverage, and summary insights, and optional coverage trend',
                 note: 'Only one of story_ids or sprint_name can be used at a time'
             }
         },

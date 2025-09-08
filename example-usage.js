@@ -2,7 +2,7 @@
  * Example usage of Azure DevOps RTM Generator
  */
 
-const AzureDevOpsRTMGenerator = require('./azure-devops-rtm');
+const { AzureDevOpsRTMGenerator } = require('./azure-devops-rtm');
 
 async function basicExample(...userStoryIds) {
     console.log('Running basic RTM generation example...');
@@ -11,6 +11,11 @@ async function basicExample(...userStoryIds) {
         process.env.AZURE_DEVOPS_ORG_URL,
         process.env.AZURE_DEVOPS_PAT,
         process.env.AZURE_DEVOPS_PROJECT,
+    );
+
+    const userStoryIds = await rtmGenerator.getUserStoriesByDateRange(
+        weekStart,
+        weekEnd,
     );
     
     try {
