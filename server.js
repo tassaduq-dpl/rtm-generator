@@ -702,7 +702,12 @@ app.get('/rtm-download', async (req, res) => {
         if (include_trend === 'true') {
             try {
                 console.log('Calculating coverage trend...');
-                coverageTrend = await generator.calculateCoverageTrend(parseInt(trend_weeks));
+                const dbRow = await database.getTrend(connection_id);
+                if (dbRow) coverageTrend = dbRow.data;
+                else {
+                    coverageTrend = await generator.calculateCoverageTrend(parseInt(trend_weeks));
+                    await database.storeTrend(connection_id, coverageTrend);
+                }
             } catch (trendError) {
                 console.error('Error calculating coverage trend:', trendError);
                 // Don't fail the entire request, just set trend to null

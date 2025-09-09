@@ -31,7 +31,7 @@ class Database {
     }
 
     /**
-     * Create the connections and sprints tables
+     * Create the connections, sprints, and trends tables
      */
     async createTables() {
         return new Promise((resolve, reject) => {
@@ -62,6 +62,17 @@ class Database {
                 )
             `;
 
+            const createTrendsTableSQL = `
+                CREATE TABLE IF NOT EXISTS trends (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    connection_id INTEGER NOT NULL,
+                    data TEXT NOT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (connection_id) REFERENCES connections (id) ON DELETE CASCADE
+                )
+            `;
+
             this.db.run(createConnectionsTableSQL, (err) => {
                 if (err) {
                     console.error('Error creating connections table:', err.message);
@@ -78,7 +89,17 @@ class Database {
                         return;
                     }
                     console.log('Sprints table created or already exists');
-                    resolve();
+                    
+                    // Create trends table
+                    this.db.run(createTrendsTableSQL, (err) => {
+                        if (err) {
+                            console.error('Error creating trends table:', err.message);
+                            reject(err);
+                            return;
+                        }
+                        console.log('Trends table created or already exists');
+                        resolve();
+                    });
                 });
             });
         });
@@ -367,6 +388,91 @@ class Database {
                     return;
                 }
                 resolve(this.changes);
+            });
+        });
+    }
+
+    /**
+     * Store trend data for a connection
+     * 
+     * @param {number} connectionId - Connection ID
+     * @param {Array} data - Array of trend data objects with period and coverage
+     * @returns {Promise<Object>} Created trend record with ID
+     */
+    async storeTrend(connectionId, data) {
+        return new Promise((resolve, reject) => {
+
+            // First, delete existing trend data for this connection
+            const deleteSQL = `DELETE FROM trends WHERE connection_id = ?`;
+            
+            this.db.run(deleteSQL, [connectionId], (err) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+
+                // Insert new trend data
+                const insertSQL = `
+                    INSERT INTO trends (connection_id, data)
+                    VALUES (?, ?)
+                `;
+
+                this.db.run(insertSQL, [connectionId, JSON.stringify(data)], function(err) {
+                    if (err) {
+                        reject(err);
+                        return;
+                    }
+                    
+                    resolve({
+                        id: this.lastID,
+                        connection_id: connectionId,
+                        data: data,
+                        created_at: new Date().toISOString()
+                    });
+                });
+            });
+        });
+    }
+
+    /**
+     * Get trend data for a connection
+     * 
+     * @param {number} connectionId - Connection ID
+     * @returns {Promise<Object|null>} Trend data object or null if not found
+     */
+    async getTrend(connectionId) {
+        return new Promise((resolve, reject) => {
+            const selectSQL = `
+                SELECT id, connection_id, data, created_at, updated_at
+                FROM trends
+                WHERE connection_id = ?
+                ORDER BY created_at DESC
+                LIMIT 1
+            `;
+
+            this.db.get(selectSQL, [connectionId], (err, row) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                if (!row) {
+                    resolve(null);
+                    return;
+                }
+
+                try {
+                    const parsedData = JSON.parse(row.data);
+                    resolve({
+                        id: row.id,
+                        connection_id: row.connection_id,
+                        data: parsedData,
+                        created_at: row.created_at,
+                        updated_at: row.updated_at
+                    });
+                } catch (parseErr) {
+                    reject(new Error('Failed to parse trend data: ' + parseErr.message));
+                }
             });
         });
     }
